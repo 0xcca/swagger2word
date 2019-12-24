@@ -4,22 +4,26 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
 import org.springframework.web.client.RestTemplate;
-import org.word.dto.Request;
-import org.word.dto.Response;
-import org.word.dto.Table;
+import org.word.model.ModelAttr;
+import org.word.model.Request;
+import org.word.model.Response;
+import org.word.model.Table;
 import org.word.service.WordService;
 import org.word.utils.JsonUtils;
 
+import java.io.IOException;
 import java.util.*;
+import java.util.Map.Entry;
+import java.util.stream.Collectors;
 
 /**
- * Created by XiuYin.Cui on 2018/1/12.
- */
+ * @Author XiuYin.Cui
+ * @Date 2018/1/12
+ **/
+@SuppressWarnings({"unchecked", "rawtypes"})
 @Slf4j
 @Service
 public class WordServiceImpl implements WordService {
@@ -27,218 +31,326 @@ public class WordServiceImpl implements WordService {
     @Autowired
     private RestTemplate restTemplate;
 
-    @Value("${swagger.url}")
-    private String swaggerUrl;
-
-    private static final String SUBSTR = "://";
-
     @Override
-    public List<Table> tableList() {
+    public Map<String, Object> tableList(String swaggerUrl) {
+        Map<String, Object> resultMap = new HashMap<>();
         List<Table> result = new ArrayList<>();
         try {
             String jsonStr = restTemplate.getForObject(swaggerUrl, String.class);
             // convert JSON string to Map
             Map<String, Object> map = JsonUtils.readValue(jsonStr, HashMap.class);
-            //得到 host 和 basePath，拼接访问路径
-            String host = StringUtils.substringBeforeLast(swaggerUrl, SUBSTR) + SUBSTR + map.get("host") + map.get("basePath");
+
+            //解析model
+            Map<String, ModelAttr> definitinMap = parseDefinitions(map);
+
             //解析paths
-            Map<String, LinkedHashMap> paths = (LinkedHashMap) map.get("paths");
+            Map<String, Map<String, Object>> paths = (Map<String, Map<String, Object>>) map.get("paths");
             if (paths != null) {
-                Iterator<Map.Entry<String, LinkedHashMap>> it = paths.entrySet().iterator();
+                Iterator<Map.Entry<String, Map<String, Object>>> it = paths.entrySet().iterator();
                 while (it.hasNext()) {
-                    Map.Entry<String, LinkedHashMap> path = it.next();
+                    Map.Entry<String, Map<String, Object>> path = it.next();
+
+                    Iterator<Map.Entry<String, Object>> it2 = path.getValue().entrySet().iterator();
                     // 1.请求路径
                     String url = path.getKey();
+
                     // 2.请求方式，类似为 get,post,delete,put 这样
-                    String requestType = "";
-                    Map<String, LinkedHashMap> value = path.getValue();
-                    Set<String> requestTypes = value.keySet();
-                    for (String str : requestTypes) {
-                        requestType += str + ",";
-                    }
-                    Iterator<Map.Entry<String, LinkedHashMap>> it2 = value.entrySet().iterator();
-                    //不管有几种请求方式，都只解析第一种
-                    Map.Entry<String, LinkedHashMap> firstRequest = it2.next();
-                    Map<String, Object> content = firstRequest.getValue();
+                    String requestType = StringUtils.join(path.getValue().keySet(), ",");
+
+                    // 3. 不管有几种请求方式，都只解析第一种
+                    Map.Entry<String, Object> firstRequest = it2.next();
+                    Map<String, Object> content = (Map<String, Object>) firstRequest.getValue();
+
                     // 4. 大标题（类说明）
                     String title = String.valueOf(((List) content.get("tags")).get(0));
+
                     // 5.小标题 （方法说明）
                     String tag = String.valueOf(content.get("summary"));
+
                     // 6.接口描述
-                    String description = String.valueOf(content.get("description"));
+                    String description = String.valueOf(content.get("summary"));
+
                     // 7.请求参数格式，类似于 multipart/form-data
                     String requestForm = "";
                     List<String> consumes = (List) content.get("consumes");
                     if (consumes != null && consumes.size() > 0) {
-                        for (String consume : consumes) {
-                            requestForm += consume + ",";
-                        }
+                        requestForm = StringUtils.join(consumes, ",");
                     }
+
                     // 8.返回参数格式，类似于 application/json
                     String responseForm = "";
                     List<String> produces = (List) content.get("produces");
                     if (produces != null && produces.size() > 0) {
-                        for (String produce : produces) {
-                            responseForm += produce + ",";
-                        }
-                    }
-                    // 9. 请求体
-                    List<Request> requestList = new ArrayList<>();
-                    List<LinkedHashMap> parameters = (ArrayList) content.get("parameters");
-                    if (parameters != null && parameters.size() > 0) {
-                        for (int i = 0; i < parameters.size(); i++) {
-                            Request request = new Request();
-                            Map<String, Object> param = parameters.get(i);
-                            request.setName(String.valueOf(param.get("name")));
-                            request.setType(param.get("type") == null ? "Object" : param.get("type").toString());
-                            request.setParamType(String.valueOf(param.get("in")));
-                            request.setRequire((Boolean) param.get("required"));
-                            request.setRemark(String.valueOf(param.get("description")));
-                            requestList.add(request);
-                        }
-                    }
-                    // 10.返回体
-                    List<Response> responseList = new ArrayList<>();
-                    Map<String, Object> responses = (LinkedHashMap) content.get("responses");
-                    Iterator<Map.Entry<String, Object>> it3 = responses.entrySet().iterator();
-                    while (it3.hasNext()) {
-                        Response response = new Response();
-                        Map.Entry<String, Object> entry = it3.next();
-                        // 状态码 200 201 401 403 404 这样
-                        response.setName(entry.getKey());
-                        LinkedHashMap<String, Object> statusCodeInfo = (LinkedHashMap) entry.getValue();
-                        response.setDescription(String.valueOf(statusCodeInfo.get("description")));
-                        response.setRemark(String.valueOf(statusCodeInfo.get("description")));
-                        responseList.add(response);
+                        responseForm = StringUtils.join(produces, ",");
                     }
 
-                    // 模拟一次HTTP请求,封装请求体和返回体
-                    // 得到请求方式
-                    String restType = firstRequest.getKey();
-                    Map<String, Object> paramMap = buildParamMap(requestList);
-                    String buildUrl = buildUrl(host + url, requestList);
+                    // 9. 请求体
+                    List<LinkedHashMap> parameters = (ArrayList) content.get("parameters");
+
+                    // 10.返回体
+                    Map<String, Object> responses = (LinkedHashMap) content.get("responses");
 
                     //封装Table
                     Table table = new Table();
+
                     table.setTitle(title);
                     table.setUrl(url);
                     table.setTag(tag);
                     table.setDescription(description);
-                    table.setRequestForm(StringUtils.removeEnd(requestForm, ","));
-                    table.setResponseForm(StringUtils.removeEnd(responseForm, ","));
-                    table.setRequestType(StringUtils.removeEnd(requestType, ","));
-                    table.setRequestList(requestList);
-                    table.setResponseList(responseList);
-                    table.setRequestParam(paramMap.toString());
-                    table.setResponseParam(doRestRequest(restType, buildUrl, paramMap));
+                    table.setRequestForm(requestForm);
+                    table.setResponseForm(responseForm);
+                    table.setRequestType(requestType);
+                    table.setRequestList(processRequestList(parameters));
+                    table.setResponseList(processResponseCodeList(responses));
+
+                    // 取出来状态是200时的返回值
+                    Map<String, Object> obj = (Map<String, Object>) responses.get("200");
+                    if (obj != null && obj.get("schema") != null) {
+                        table.setModelAttr(processResponseModelAttrs(obj, definitinMap));
+                    }
+
+                    //示例
+                    table.setRequestParam(processRequestParam(table.getRequestList(), definitinMap));
+                    table.setResponseParam(processResponseParam(obj, definitinMap));
+
                     result.add(table);
                 }
             }
+            Map<String, List<Table>> tableMap = result.stream().parallel().collect(Collectors.groupingBy(Table::getTitle));
+            resultMap.put("tableMap", new TreeMap<>(tableMap));
+            resultMap.put("info", map.get("info"));
+
+            log.debug(JsonUtils.writeJsonStr(resultMap));
         } catch (Exception e) {
             log.error("parse error", e);
         }
-        return result;
+        return resultMap;
     }
 
     /**
-     * 重新构建url
+     * 处理请求参数列表
      *
-     * @param url
-     * @param requestList
-     * @return etc:http://localhost:8080/rest/delete?uuid={uuid}
-     */
-    private String buildUrl(String url, List<Request> requestList) {
-        String param = "";
-        if (requestList != null && requestList.size() > 0) {
-            for (Request request : requestList) {
-                String name = request.getName();
-                param += name + "={" + name + "}&";
-            }
-        }
-        if (StringUtils.isNotEmpty(param)) {
-            url += "?" + StringUtils.removeEnd(param, "&");
-        }
-        return url;
-
-    }
-
-    /**
-     * 发送一个 Restful 请求
-     *
-     * @param restType "get", "head", "post", "put", "delete", "options", "patch"
-     * @param url      资源地址
-     * @param paramMap 参数
+     * @param parameters
      * @return
      */
-    private String doRestRequest(String restType, String url, Map<String, Object> paramMap) throws JsonProcessingException {
-        Object object = new Object();
-        try {
-            switch (restType) {
-                case "get":
-                    object = restTemplate.getForObject(url, Object.class, paramMap);
-                    break;
-                case "post":
-                    object = restTemplate.postForObject(url, paramMap, Object.class);
-                    break;
-                case "put":
-                    restTemplate.put(url, null, paramMap);
-                    break;
-                case "head":
-                    HttpHeaders httpHeaders = restTemplate.headForHeaders(url, paramMap);
-                    return JsonUtils.writeJsonStr(httpHeaders);
-                case "delete":
-                    restTemplate.delete(url, paramMap);
-                    break;
-                case "options":
-                    Set<HttpMethod> httpMethodSet = restTemplate.optionsForAllow(url, paramMap);
-                    return JsonUtils.writeJsonStr(httpMethodSet);
-                case "patch":
-                    object = restTemplate.execute(url, HttpMethod.PATCH, null, null, paramMap);
-                    break;
-                case "trace":
-                    object = restTemplate.execute(url, HttpMethod.TRACE, null, null, paramMap);
-                    break;
-                default:
-                    break;
+    private List<Request> processRequestList(List<LinkedHashMap> parameters) {
+        List<Request> requestList = new ArrayList<>();
+        if (!CollectionUtils.isEmpty(parameters)) {
+            for (Map<String, Object> param : parameters) {
+                Object in = param.get("in");
+                Request request = new Request();
+                request.setName(String.valueOf(param.get("name")));
+                request.setType(param.get("type") == null ? "object" : param.get("type").toString());
+                request.setParamType(String.valueOf(in));
+                // 考虑对象参数类型
+                if (in != null && "body".equals(in)) {
+                    Map<String, Object> schema = (Map) param.get("schema");
+                    Object ref = schema.get("$ref");
+                    // 数组情况另外处理
+                    if (schema.get("type") != null && "array".equals(schema.get("type"))) {
+                        ref = ((Map) schema.get("items")).get("$ref");
+                    }
+                    request.setParamType(ref == null ? "{}" : ref.toString());
+                }
+                // 是否必填
+                request.setRequire(false);
+                if (param.get("required") != null) {
+                    request.setRequire((Boolean) param.get("required"));
+                }
+                // 参数说明
+                request.setRemark(String.valueOf(param.get("description")));
+                request.setParamType(request.getParamType().replaceAll("#/definitions/", ""));
+                requestList.add(request);
             }
-        } catch (Exception ex) {
-            // 无法使用 restTemplate 发送的请求，返回""
-            // ex.printStackTrace();
-            return "";
         }
-        return JsonUtils.writeJsonStr(object);
+        return requestList;
+    }
+
+
+    /**
+     * 处理返回码列表
+     *
+     * @param responses 全部状态码返回对象
+     * @return
+     */
+    private List<Response> processResponseCodeList(Map<String, Object> responses) {
+        List<Response> responseList = new ArrayList<>();
+        Iterator<Map.Entry<String, Object>> resIt = responses.entrySet().iterator();
+        while (resIt.hasNext()) {
+            Map.Entry<String, Object> entry = resIt.next();
+            Response response = new Response();
+            // 状态码 200 201 401 403 404 这样
+            response.setName(entry.getKey());
+            LinkedHashMap<String, Object> statusCodeInfo = (LinkedHashMap) entry.getValue();
+            response.setDescription(String.valueOf(statusCodeInfo.get("description")));
+            Object schema = statusCodeInfo.get("schema");
+            if (schema != null) {
+                Object originalRef = ((LinkedHashMap) schema).get("originalRef");
+                response.setRemark(originalRef == null ? "" : originalRef.toString());
+            }
+            responseList.add(response);
+        }
+        return responseList;
     }
 
     /**
-     * 封装post请求体
+     * 处理返回属性列表
+     *
+     * @param responseObj
+     * @param definitinMap
+     * @return
+     */
+    private ModelAttr processResponseModelAttrs(Map<String, Object> responseObj, Map<String, ModelAttr> definitinMap) {
+        Map<String, Object> schema = (Map<String, Object>) responseObj.get("schema");
+        String type = (String) schema.get("type");
+        String ref = null;
+        //数组
+        if ("array".equals(type)) {
+            Map<String, Object> items = (Map<String, Object>) schema.get("items");
+            if (items != null && items.get("$ref") != null) {
+                ref = (String) items.get("$ref");
+            }
+        }
+        //对象
+        if (schema.get("$ref") != null) {
+            ref = (String) schema.get("$ref");
+        }
+
+        //其他类型
+        ModelAttr modelAttr = new ModelAttr();
+        modelAttr.setType(StringUtils.defaultIfBlank(type, StringUtils.EMPTY));
+
+        if (StringUtils.isNotBlank(ref) && definitinMap.get(ref) != null) {
+            modelAttr = definitinMap.get(ref);
+        }
+        return modelAttr;
+    }
+
+    /**
+     * 解析Definition
+     *
+     * @param map
+     * @return
+     */
+    private Map<String, ModelAttr> parseDefinitions(Map<String, Object> map) {
+        Map<String, Map<String, Object>> definitions = (Map<String, Map<String, Object>>) map.get("definitions");
+        Map<String, ModelAttr> definitinMap = new HashMap<>(256);
+        if (definitions != null) {
+            Iterator<String> modelNameIt = definitions.keySet().iterator();
+            while (modelNameIt.hasNext()) {
+                String modeName = modelNameIt.next();
+                Map<String, Object> modeProperties = (Map<String, Object>) definitions.get(modeName).get("properties");
+                if (modeProperties == null) {
+                    continue;
+                }
+                Iterator<Entry<String, Object>> mIt = modeProperties.entrySet().iterator();
+
+                List<ModelAttr> attrList = new ArrayList<>();
+
+                //解析属性
+                while (mIt.hasNext()) {
+                    Entry<String, Object> mEntry = mIt.next();
+                    Map<String, Object> attrInfoMap = (Map<String, Object>) mEntry.getValue();
+                    ModelAttr modeAttr = new ModelAttr();
+                    modeAttr.setName(mEntry.getKey());
+                    modeAttr.setType((String) attrInfoMap.get("type"));
+                    if (attrInfoMap.get("format") != null) {
+                        modeAttr.setType(modeAttr.getType() + "(" + attrInfoMap.get("format") + ")");
+                    }
+                    modeAttr.setType(StringUtils.defaultIfBlank(modeAttr.getType(), "object"));
+                    modeAttr.setDescription((String) attrInfoMap.get("description"));
+                    attrList.add(modeAttr);
+                }
+
+                ModelAttr modeAttr = new ModelAttr();
+                Object title = definitions.get(modeName).get("title");
+                Object description = definitions.get(modeName).get("description");
+                modeAttr.setClassName(title == null ? "" : title.toString());
+                modeAttr.setDescription(description == null ? "" : description.toString());
+                modeAttr.setProperties(attrList);
+                definitinMap.put("#/definitions/" + modeName, modeAttr);
+            }
+        }
+        return definitinMap;
+    }
+
+    /**
+     * 处理返回值
+     *
+     * @param responseObj
+     * @return
+     */
+    private String processResponseParam(Map<String, Object> responseObj, Map<String, ModelAttr> definitinMap) throws JsonProcessingException {
+        if (responseObj != null && responseObj.get("schema") != null) {
+            Map<String, Object> schema = (Map<String, Object>) responseObj.get("schema");
+            String type = (String) schema.get("type");
+            String ref = null;
+            // 数组
+            if ("array".equals(type)) {
+                Map<String, Object> items = (Map<String, Object>) schema.get("items");
+                if (items != null && items.get("$ref") != null) {
+                    ref = (String) items.get("$ref");
+                }
+            }
+            // 对象
+            if (schema.get("$ref") != null) {
+                ref = (String) schema.get("$ref");
+            }
+            if (StringUtils.isNotEmpty(ref)) {
+                ModelAttr modelAttr = definitinMap.get(ref);
+                if (modelAttr != null && !CollectionUtils.isEmpty(modelAttr.getProperties())) {
+                    Map<String, Object> responseMap = new HashMap<>(8);
+                    for (ModelAttr subModelAttr : modelAttr.getProperties()) {
+                        responseMap.put(subModelAttr.getName(), subModelAttr.getType());
+                    }
+                    return JsonUtils.writeJsonStr(responseMap);
+                }
+            }
+        }
+        return StringUtils.EMPTY;
+    }
+
+    /**
+     * 封装请求体
      *
      * @param list
+     * @param definitinMap
      * @return
      */
-    private Map<String, Object> buildParamMap(List<Request> list) {
-        Map<String, Object> map = new HashMap<>(8);
+    private String processRequestParam(List<Request> list, Map<String, ModelAttr> definitinMap) throws IOException {
+        Map<String, Object> paramMap = new HashMap<>(8);
         if (list != null && list.size() > 0) {
             for (Request request : list) {
                 String name = request.getName();
                 String type = request.getType();
                 switch (type) {
                     case "string":
-                        map.put(name, "string");
+                        paramMap.put(name, "string");
                         break;
                     case "integer":
-                        map.put(name, 0);
+                        paramMap.put(name, 0);
                         break;
                     case "number":
-                        map.put(name, 0.0);
+                        paramMap.put(name, 0.0);
                         break;
                     case "boolean":
-                        map.put(name, true);
+                        paramMap.put(name, true);
+                        break;
+                    case "body":
+                    case "object":
+                        ModelAttr modelAttr = definitinMap.get("#/definitions/" + request.getParamType());
+                        if (modelAttr != null && !CollectionUtils.isEmpty(modelAttr.getProperties())) {
+                            for (ModelAttr subModelAttr : modelAttr.getProperties()) {
+                                paramMap.put(subModelAttr.getName(), subModelAttr.getType());
+                            }
+                            break;
+                        }
                     default:
-                        map.put(name, null);
+                        paramMap.put(name, null);
                         break;
                 }
             }
         }
-        return map;
+        return JsonUtils.writeJsonStr(paramMap);
     }
 }

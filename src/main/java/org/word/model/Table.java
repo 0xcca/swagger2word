@@ -1,4 +1,4 @@
-package org.word.dto;
+package org.word.model;
 
 import lombok.Data;
 
@@ -62,4 +62,9 @@ public class Table {
      * 返回参数
      */
     private String responseParam;
+
+    /**
+     * 返回属性列表
+     */
+    private ModelAttr modelAttr = new ModelAttr();
 }

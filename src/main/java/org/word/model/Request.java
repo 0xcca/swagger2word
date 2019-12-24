@@ -1,4 +1,6 @@
-package org.word.dto;
+package org.word.model;
+
+import java.io.Serializable;
 
 import lombok.Data;
 
@@ -6,7 +8,7 @@ import lombok.Data;
  * Created by XiuYin.Cui on 2018/1/11.
  */
 @Data
-public class Request {
+public class Request implements Serializable{
 
     /**
      * 参数名
